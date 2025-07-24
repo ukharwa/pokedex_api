@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
@@ -50,7 +49,6 @@ func (c *Cache) reapLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			fmt.Println("Cleaning up cache...")
 			var count int
 			c.mutex.Lock()
 			for key, entry := range c.cache {
@@ -60,7 +58,6 @@ func (c *Cache) reapLoop() {
 				}
 			}
 			c.mutex.Unlock()
-			fmt.Printf("Clean up complete. (%d) outdated entries removed.\n", count)
 		}
 	}
 }

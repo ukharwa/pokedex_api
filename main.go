@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -12,45 +13,10 @@ import (
 	"github.com/ukharwa/pokedex_api/internal"
 )
 
-type cliCommand struct {
-	name        string
-	description string
-	callback    func(*config, string) error
-}
-
-type location struct {
-	Name string `json:"name"`
-	Url  string `json:"url"`
-}
-
-type locationAreaResponse struct {
-	Count    int        `json:"count"`
-	Next     string     `json:"next"`
-	Previous string     `json:"previous"`
-	Results  []location `json:"results"`
-}
-
-type pokemon struct {
-	Name string `json:"name"`
-	Url  string `json:"url"`
-}
-
-type encounter struct {
-	Pokemon pokemon `json:"pokemon"`
-}
-
-type locationEncounters struct {
-	Encounters []encounter `json:"pokemon_encounters"`
-}
-
-type config struct {
-	next string
-	prev string
-}
-
 var commands map[string]cliCommand
 var cache *internal.Cache
 var api_path string = "https://pokeapi.co/api/v2/"
+var pokedex = make(map[string]pokemon)
 
 func init() {
 	commands = map[string]cliCommand{
@@ -79,7 +45,23 @@ func init() {
 			description: "get a list of pokemon in the area",
 			callback:    commandExplore,
 		},
+		"catch": {
+			name:        "catch",
+			description: "Attempt to catch a pokemon",
+			callback:    commandCatch,
+		},
+		"inspect": {
+			name:        "inspect",
+			description: "Inspect a pokemon you caught",
+			callback:    commandInspect,
+		},
+		"pokedex": {
+			name:        "pokedex",
+			description: "Lists all the pokemon you have caught",
+			callback:    commandPokedex,
+		},
 	}
+
 	var err error
 	cache, err = internal.NewCache(1 * time.Minute)
 	if err != nil {
@@ -265,5 +247,85 @@ func commandExplore(c *config, input string) error {
 		fmt.Printf("- %s\n", encounter.Pokemon.Name)
 	}
 
+	return nil
+}
+
+func commandCatch(c *config, input string) error {
+	url := api_path + "pokemon/" + input
+	fmt.Printf("Throwing a pokeball at %s\n", input)
+
+	val, exists, err := cache.Get(url)
+	if err != nil {
+		return err
+	}
+
+	var data pokemon
+
+	if !exists {
+		res, err := http.Get(url)
+		if err != nil {
+			return err
+		}
+		defer res.Body.Close()
+
+		if res.StatusCode > 299 {
+			return fmt.Errorf("Response failed with status code: %d", res.StatusCode)
+		}
+
+		err = json.NewDecoder(res.Body).Decode(&data)
+		if err != nil {
+			return err
+		}
+
+		bodyBytes, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+		cache.Add(url, bodyBytes)
+	} else {
+		err = json.Unmarshal(val, &data)
+		if err != nil {
+			return err
+		}
+	}
+
+	base := data.BaseXp
+	ratio := float64(base) / float64(650)
+	probability := 1.0 - (ratio * 0.8)
+	caught := rand.Float64() < probability
+	if caught {
+		fmt.Printf("%s was caught!\n", data.Name)
+		pokedex[data.Name] = data
+	} else {
+		fmt.Printf("%s escaped!\n", data.Name)
+	}
+
+	return nil
+}
+
+func commandInspect(c *config, input string) error {
+	poke, exists := pokedex[input]
+
+	if exists {
+		fmt.Printf("Name: %s\nHeight: %d\nWeight: %d\n", poke.Name, poke.Height, poke.Weight)
+		fmt.Print("Stats:\n")
+		for _, stat := range poke.Stats {
+			fmt.Printf(" -%s: %d\n", stat.Stat.Name, stat.BaseStat)
+		}
+		fmt.Print("Types:\n")
+		for _, t := range poke.Types {
+			fmt.Printf(" -%s\n", t.Type.Name)
+		}
+	} else {
+		return fmt.Errorf("You have not caught that pokemon")
+	}
+	return nil
+}
+
+func commandPokedex(c *config, input string) error {
+	fmt.Println("Your Pokedex: ")
+	for key := range pokedex {
+		fmt.Printf(" - %s\n", key)
+	}
 	return nil
 }
